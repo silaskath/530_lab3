@@ -38,14 +38,42 @@ struct trie_node * new_leaf (const char *string, size_t strlen, int32_t ip4_addr
 }
 
 int compare_keys (const char *string1, int len1, const char *string2, int len2, int *pKeylen) {
-    int keylen, offset1, offset2;
-    keylen = len1 < len2 ? len1 : len2;
-    offset1 = len1 - keylen;
-    offset2 = len2 - keylen;
+    int keylen, offset;
+    char scratch[64];
+    assert (len1 > 0);
+    assert (len2 > 0);
+    // Take the max of the two keys, treating the front as if it were 
+    // filled with spaces, just to ensure a total order on keys.
+    if (len1 < len2) {
+      keylen = len2;
+      offset = keylen - len1;
+      memset(scratch, ' ', offset);
+      memcpy(&scratch[offset], string1, len1);
+      string1 = scratch;
+    } else if (len2 < len1) {
+      keylen = len1;
+      offset = keylen - len2;
+      memset(scratch, ' ', offset);
+      memcpy(&scratch[offset], string2, len2);
+      string2 = scratch;
+    } else
+      keylen = len1; // == len2
+      
     assert (keylen > 0);
     if (pKeylen)
       *pKeylen = keylen;
-    return strncmp(&string1[offset1], &string2[offset2], keylen);
+    return strncmp(string1, string2, keylen);
+}
+
+int compare_keys_substring (const char *string1, int len1, const char *string2, int len2, int *pKeylen) {
+  int keylen, offset1, offset2;
+  keylen = len1 < len2 ? len1 : len2;
+  offset1 = len1 - keylen;
+  offset2 = len2 - keylen;
+  assert (keylen > 0);
+  if (pKeylen)
+    *pKeylen = keylen;
+  return strncmp(&string1[offset1], &string2[offset2], keylen);
 }
 
 void init(int numthreads) {
@@ -72,7 +100,7 @@ _search (struct trie_node *node, const char *string, size_t strlen) {
   assert(node->strlen < 64);
 
   // See if this key is a substring of the string passed in
-  cmp = compare_keys(node->key, node->strlen, string, strlen, &keylen);
+  cmp = compare_keys_substring(node->key, node->strlen, string, strlen, &keylen);
   if (cmp == 0) {
     // Yes, either quit, or recur on the children
 
@@ -88,14 +116,16 @@ _search (struct trie_node *node, const char *string, size_t strlen) {
       return node;
     }
 
-  } else if (cmp < 0) {
-    // No, look right (the node's key is "less" than the search key)
-    return _search(node->next, string, strlen);
   } else {
-    // Quit early
-    return 0;
+    cmp = compare_keys(node->key, node->strlen, string, strlen, &keylen);
+    if (cmp < 0) {
+      // No, look right (the node's key is "less" than the search key)
+      return _search(node->next, string, strlen);
+    } else {
+      // Quit early
+      return 0;
+    }
   }
-
 }
 
 
@@ -125,7 +155,7 @@ int _insert (const char *string, size_t strlen, int32_t ip4_address,
   assert (node->strlen < 64);
 
   // Take the minimum of the two lengths
-  cmp = compare_keys (node->key, node->strlen, string, strlen, &keylen);
+  cmp = compare_keys_substring (node->key, node->strlen, string, strlen, &keylen);
   if (cmp == 0) {
     // Yes, either quit, or recur on the children
 
@@ -178,8 +208,8 @@ int _insert (const char *string, size_t strlen, int32_t ip4_address,
     /* Is there any common substring? */
     int i, cmp2, keylen2, overlap = 0;
     for (i = 1; i < keylen; i++) {
-      cmp2 = compare_keys (&node->key[i], node->strlen - i, 
-			   &string[i], strlen - i, &keylen2);
+      cmp2 = compare_keys_substring (&node->key[i], node->strlen - i, 
+				     &string[i], strlen - i, &keylen2);
       assert (keylen2 > 0);
       if (cmp2 == 0) {
 	overlap = 1;
@@ -214,26 +244,29 @@ int _insert (const char *string, size_t strlen, int32_t ip4_address,
 
       return _insert(string, i, ip4_address,
 		     node, new_node, NULL);
-    } else if (cmp < 0) {
-      if (node->next == NULL) {
+    } else {
+      cmp = compare_keys (node->key, node->strlen, string, strlen, &keylen);
+      if (cmp < 0) {
+	// No, recur right (the node's key is "less" than  the search key)
+	if (node->next)
+	  return _insert(string, strlen, ip4_address, node->next, NULL, node);
+	else {
+	  // Insert here
+	  struct trie_node *new_node = new_leaf (string, strlen, ip4_address);
+	  node->next = new_node;
+	  return 1;
+	}
+      } else {
 	// Insert here
 	struct trie_node *new_node = new_leaf (string, strlen, ip4_address);
-	node->next = new_node;
-	return 1;
-      } else {
-	// No, recur right (the node's key is "greater" than  the search key)
-	return _insert(string, strlen, ip4_address, node->next, NULL, node);
+	new_node->next = node;
+	if (node == root)
+	  root = new_node;
+	else if (parent && parent->children == node)
+	  parent->children = new_node;
+	else if (left && left->next == node)
+	  left->next = new_node;
       }
-    } else {
-      // Insert here
-      struct trie_node *new_node = new_leaf (string, strlen, ip4_address);
-      new_node->next = node;
-      if (node == root)
-	root = new_node;
-      else if (parent && parent->children == node)
-	parent->children = new_node;
-      else if (left && left->next == node)
-	left->next = new_node;
     }
     return 1;
   }
@@ -269,7 +302,7 @@ _delete (struct trie_node *node, const char *string,
   assert(node->strlen < 64);
 
   // See if this key is a substring of the string passed in
-  cmp = compare_keys (node->key, node->strlen, string, strlen, &keylen);
+  cmp = compare_keys_substring (node->key, node->strlen, string, strlen, &keylen);
   if (cmp == 0) {
     // Yes, either quit, or recur on the children
 
@@ -323,27 +356,29 @@ _delete (struct trie_node *node, const char *string,
       }
     }
 
-  } else if (cmp < 0) {
-    // No, look right (the node's key is "less" than  the search key)
-    struct trie_node *found = _delete(node->next, string, strlen);
-    if (found) {
-      /* If the node doesn't have children, delete it.
-       * Otherwise, keep it around to find the kids */
-      if (found->children == NULL && found->ip4_address == 0) {
-	assert(node->next == found);
-	node->next = found->next;
-	free(found);
-	node_count--;
-      }       
-
-      return node; /* Recursively delete needless interior nodes */
-    }
-    return NULL;
   } else {
-    // Quit early
-    return NULL;
+    cmp = compare_keys (node->key, node->strlen, string, strlen, &keylen);
+    if (cmp < 0) {
+      // No, look right (the node's key is "less" than  the search key)
+      struct trie_node *found = _delete(node->next, string, strlen);
+      if (found) {
+	/* If the node doesn't have children, delete it.
+	 * Otherwise, keep it around to find the kids */
+	if (found->children == NULL && found->ip4_address == 0) {
+	  assert(node->next == found);
+	  node->next = found->next;
+	  free(found);
+	  node_count--;
+	}       
+	
+	return node; /* Recursively delete needless interior nodes */
+      }
+      return NULL;
+    } else {
+      // Quit early
+      return NULL;
+    }
   }
-
 }
 
 int delete  (const char *string, size_t strlen) {
