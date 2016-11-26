@@ -20,7 +20,7 @@ int simulation_length = 30; // default to 30 seconds
 volatile int finished = 0;
 
 // Uncomment this line for debug printing
-//#define DEBUG 1
+#define DEBUG 1
 #ifdef DEBUG
 #define DEBUG_PRINT(...) printf(__VA_ARGS__)
 #else
@@ -109,13 +109,13 @@ client(void *arg)
     default:
       assert(0);
     }
-  }
 
-  /* If we don't have a separate delete thread, the client needs to make sure
-   * that the count didn't exceed the max.
-   */
+    /* If we don't have a separate delete thread, the client needs to
+     * make sure that the count didn't exceed the max.
+     */
   if (!separate_delete_thread)
     check_max_nodes();
+  }
 
   return NULL;
 }
@@ -126,6 +126,22 @@ client(void *arg)
   printf(msg);					\
   exit(1);					\
   } while (0)
+
+#define INSERT_TEST(ky, len, ip) do {		    \
+    rv = insert(ky, len, ip);			    \
+    if (!rv) die ("Failed to insert key " ky "\n"); \
+  } while (0)					    
+
+#define SEARCH_TEST(ky, len, ex) do {				\
+    rv = search(ky, len, &ip);					\
+    if (!rv) die ("Failed fine insert key " ky "\n");		\
+    if (ip != ex) die ("Found bad IP for key " ky "\n");	\
+  } while (0)					    
+
+#define DELETE_TEST(ky, len) do {		    \
+    rv = delete(ky, len);			    \
+    if (!rv) die ("Failed to delete key " ky "\n"); \
+  } while (0)					    
 
 int self_tests() {
   int rv;
@@ -212,12 +228,54 @@ int self_tests() {
 
   rv = delete("xaaa", 4);
   if (!rv) die ("Failed to delete real key xaaa\n");
+
+  // Tests suggested by Kammy
+  INSERT_TEST("google", 6, 1);
+  INSERT_TEST("com", 3, 2);
+  INSERT_TEST("edu", 3, 3);
+  INSERT_TEST("org", 3, 4);
+  INSERT_TEST("but", 3, 5);
+  INSERT_TEST("butter", 6, 6);
+  INSERT_TEST("pincher", 7, 7);
+  INSERT_TEST("pinter", 6, 8);
+  INSERT_TEST("roller", 6, 9);
+  INSERT_TEST("simple", 6, 10);
+  INSERT_TEST("file", 4, 11);
+  INSERT_TEST("principle", 9, 12);
+
+  SEARCH_TEST("google", 6, 1);
+  SEARCH_TEST("com", 3, 2);
+  SEARCH_TEST("edu", 3, 3);
+  SEARCH_TEST("org", 3, 4);
+  SEARCH_TEST("but", 3, 5);
+  SEARCH_TEST("butter", 6, 6);
+  SEARCH_TEST("pincher", 7, 7);
+  SEARCH_TEST("pinter", 6, 8);
+  SEARCH_TEST("roller", 6, 9);
+  SEARCH_TEST("simple", 6, 10);
+  SEARCH_TEST("file", 4, 11);
+  SEARCH_TEST("principle", 9, 12);
+
+  print();
   
+  DELETE_TEST("google", 6);
+  DELETE_TEST("com", 3);
+  DELETE_TEST("edu", 3);
+  DELETE_TEST("org", 3);
+  DELETE_TEST("but", 3);
+  DELETE_TEST("butter", 6);
+  DELETE_TEST("pincher", 7);
+  DELETE_TEST("pinter", 6);
+  DELETE_TEST("roller", 6);
+  DELETE_TEST("simple", 6);
+  DELETE_TEST("file", 4);
+  DELETE_TEST("principle", 9);
+
   printf("End of self-tests, tree is:\n");
   print();
   printf("End of self-tests\n");
-
-  return 0;
+  exit(0);
+  //return 0;
 }
 
 void help() {
@@ -298,11 +356,7 @@ int main(int argc, char ** argv) {
   // Wait for all clients to exit.  If we are allowing blocking,
   // cancel the threads, since they may hang forever
   if (separate_delete_thread) {
-      for (i = 0; i < numthreads + separate_delete_thread; i++) {
-	int rv = pthread_cancel(tinfo[i]);
-	if (rv != 0)
-	  printf ("Uh oh.  pthread_cancel failed %d\n", rv);
-      }
+    shutdown_delete_thread();
   }
 
   for (i = 0; i < numthreads; i++) {

@@ -6,6 +6,29 @@
 #include <stdlib.h>
 #include "trie.h"
 
+// linked list of nodes
+struct list_element {
+  struct list_element *parent;
+  struct trie_node *node;
+};
+
+struct list_element * addNode(struct list_element *this_list, struct trie_node *node) {
+  struct list_element *node_list = malloc(sizeof(struct list_element));
+  node_list->parent = this_list;
+  node_list->node = node;
+  return node_list;
+}
+
+struct list_element * removeNode(struct list_element *this_list) {
+  struct list_element *node_list = malloc(sizeof(struct list_element));
+  node_list = this_list->parent;
+  free(this_list);
+  //node_list->node = this_list->parent->node;
+  return node_list;
+}
+
+struct list_element * list_o_nodes = NULL;
+
 struct trie_node {
   struct trie_node *next;  /* parent list */
   unsigned int strlen; /* Length of the key */
@@ -17,6 +40,8 @@ struct trie_node {
 static struct trie_node * root = NULL;
 static int node_count = 0;
 static int max_count = 100;  //Try to stay under 100 nodes
+//struct trie_node * last_added;
+//struct trie_node node_list[99999999];
 
 struct trie_node * new_leaf (const char *string, size_t strlen, int32_t ip4_address) {
   struct trie_node *new_node = malloc(sizeof(struct trie_node));
@@ -33,8 +58,15 @@ struct trie_node * new_leaf (const char *string, size_t strlen, int32_t ip4_addr
   new_node->key[strlen] = '\0';
   new_node->ip4_address = ip4_address;
   new_node->children = NULL;
+  /*
+    last_added = new_node;
+  */
+  //node_list[node_count] = *new_node;
+
+  list_o_nodes = addNode(list_o_nodes, new_node);
 
   return new_node;
+
 }
 
 int compare_keys (const char *string1, int len1, const char *string2, int len2, int *pKeylen) {
@@ -81,11 +113,6 @@ void init(int numthreads) {
     printf("WARNING: This Trie is only safe to use with one thread!!!  You have %d!!!\n", numthreads);
 
   root = NULL;
-}
-
-void shutdown_delete_thread() {
-  // Don't need to do anything in the sequential case.
-  return;
 }
 
 /* Recursive helper function.
@@ -179,14 +206,13 @@ int _insert (const char *string, size_t strlen, int32_t ip4_address,
       assert ((!parent) || (!left));
 
       if (parent) {
-	parent->children = new_node;
+        parent->children = new_node;
       } else if (left) {
-	left->next = new_node;
+        left->next = new_node;
       } else if ((!parent) || (!left)) {
-	root = new_node;
+      	root = new_node;
       }
       return 1;
-
     } else if (strlen > keylen) {
       
       if (node->children == NULL) {
@@ -224,13 +250,11 @@ int _insert (const char *string, size_t strlen, int32_t ip4_address,
 
     if (overlap) {
       // Insert a common parent, recur
-      int offset = strlen - keylen2;
-      struct trie_node *new_node = new_leaf (&string[offset], keylen2, 0);
-      assert ((node->strlen - keylen2) > 0);
-      node->strlen -= keylen2;
+      struct trie_node *new_node = new_leaf (&string[i], strlen - i, 0);
+      int diff = node->strlen - i;
+      assert ((node->strlen - diff) > 0);
+      node->strlen -= diff;
       new_node->children = node;
-      new_node->next = node->next;
-      node->next = NULL;
       assert ((!parent) || (!left));
 
       if (node == root) {
@@ -239,14 +263,17 @@ int _insert (const char *string, size_t strlen, int32_t ip4_address,
 	root = new_node;
       } else if (parent) {
 	assert(parent->children == node);
+	new_node->next = NULL;
 	parent->children = new_node;
       } else if (left) {
+	new_node->next = node->next;
+	node->next = NULL;
 	left->next = new_node;
       } else if ((!parent) && (!left)) {
 	root = new_node;
       }
 
-      return _insert(string, offset, ip4_address,
+      return _insert(string, i, ip4_address,
 		     node, new_node, NULL);
     } else {
       cmp = compare_keys (node->key, node->strlen, string, strlen, &keylen);
@@ -398,7 +425,11 @@ int delete  (const char *string, size_t strlen) {
  * Use any policy you like to select the node.
  */
 int drop_one_node  () {
-  // Your code here
+  //printf("Dropping %s\n", node_list[node_count].key);
+  //delete(node_list[node_count].key, strlen(node_list[node_count].key));
+  printf("removing node #: %d - %s\n", node_count, list_o_nodes->node->key);
+  delete(list_o_nodes->node->key, strlen(list_o_nodes->node->key));
+  removeNode(list_o_nodes);
   return 0;
 }
 
@@ -406,9 +437,10 @@ int drop_one_node  () {
  */
 void check_max_nodes  () {
   while (node_count > max_count) {
-    printf("Warning: not dropping nodes yet.  Drop one node not implemented\n");
-    break;
-    //drop_one_node();
+     // printf("Warning: not dropping nodes yet.  Drop one node not implemented\n");
+     // break;
+    drop_one_node();
+    //node_count--;
   }
 }
 

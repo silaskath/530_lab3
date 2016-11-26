@@ -10,6 +10,11 @@ void init(int numthreads) {
   /* Your code here */
 }
 
+void shutdown_delete_thread() {
+  /* Your code here */
+  return;
+}
+
 int insert (const char *string, size_t strlen, int32_t ip4_address) {
   /* Your code here */
   return 0;
