@@ -19,15 +19,16 @@ static struct trie_node * root = NULL;
 static int node_count = 0;
 static int max_count = 100;  //Try to stay at no more than 100 nodes
 pthread_mutex_t mutex;
-pthread_cond_t delete = PTHREAD_COND_INITIALIZER;
+pthread_cond_t delete_cond = PTHREAD_COND_INITIALIZER;
 extern int separate_delete_thread;
 
 void init(int numthreads) {
 
     /* RV of 0 indicates success */
+    /* Initialize mutex thread and delete thread condition */
     assert(pthread_mutex_init(&mutex, NULL) == 0);
+    assert(pthread_cond_init(&delete_cond, NULL) == 0);
 
-    assert(pthread_cond_init(&delete, 0))
     root = NULL;
 }
 
@@ -290,6 +291,10 @@ int insert (const char *string, size_t strlen, int32_t ip4_address) {
     if (strlen == 0)
         return 0;
 
+    /* Check conditions to wake up delete thread */
+    if (separate_delete_thread && node_count > 100)
+        assert(pthread_cond_signal(&delete_cond) == 0);
+
     /* Edge case: root is null */
     if (root == NULL) {
 
@@ -413,6 +418,7 @@ int delete  (const char *string, size_t strlen) {
     
     assert(strlen < 64);
 
+    printf("Deleting %s\n", string);
     /* Lock before recursive call */    
     assert(pthread_mutex_lock(&mutex) == 0);
     struct trie_node *rv = _delete(root, string, strlen);
@@ -459,11 +465,18 @@ int drop_one_node  () {
 /* Check the total node count; see if we have exceeded a the max.
  */
 void check_max_nodes  () {
+    printf("check_max_nodes\n");
+
     assert(pthread_mutex_lock(&mutex) == 0);
-    // wait on node_count > max_count
-      while (node_count > max_count) {
+
+    while(node_count > max_count && separate_delete_thread) {
+        assert(pthread_cond_wait(&delete_cond, &mutex) == 0);
+    }
+
+    while (node_count > max_count) {
         drop_one_node();
-      }
+    }
+
     assert(pthread_mutex_unlock(&mutex) == 0);
 }
 
