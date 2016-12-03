@@ -39,6 +39,18 @@ struct trie_node * new_leaf (const char *string, size_t strlen, int32_t ip4_addr
     return new_node;
 }
 
+// Compare strings backward.  Unlike strncmp, we assume
+// that we will not stop at a null termination, only after
+// n chars (or a difference).  Base code borrowed from musl
+int reverse_strncmp(const char *left, const char *right, size_t n)
+{
+    const unsigned char *l= (const unsigned char *) &left[n-1];
+    const unsigned char *r= (const unsigned char *) &right[n-1];
+    if (!n--) return 0;
+    for (; *l && *r && n && *l == *r ; l--, r--, n--);
+    return *l - *r;
+}
+
 int compare_keys (const char *string1, int len1, const char *string2, int len2, int *pKeylen) {
     int keylen, offset;
     char scratch[64];
@@ -64,7 +76,7 @@ int compare_keys (const char *string1, int len1, const char *string2, int len2, 
     assert (keylen > 0);
     if (pKeylen)
         *pKeylen = keylen;
-    return strncmp(string1, string2, keylen);
+    return reverse_strncmp(string1, string2, keylen);
 }
 
 int compare_keys_substring (const char *string1, int len1, const char *string2, int len2, int *pKeylen) {
@@ -75,7 +87,7 @@ int compare_keys_substring (const char *string1, int len1, const char *string2, 
     assert (keylen > 0);
     if (pKeylen)
         *pKeylen = keylen;
-    return strncmp(&string1[offset1], &string2[offset2], keylen);
+    return reverse_strncmp(&string1[offset1], &string2[offset2], keylen);
 }
 
 void init(int numthreads) {
@@ -98,7 +110,7 @@ void shutdown_delete_thread() {
  */
 struct trie_node * 
 _search (struct trie_node *node, const char *string, size_t strlen) {
-	 
+   
     int keylen, cmp;
 
     // First things first, check if we are NULL 
@@ -177,6 +189,8 @@ int _insert (const char *string, size_t strlen, int32_t ip4_address,
             new_node = new_leaf (string, strlen, ip4_address);
             node->strlen -= keylen;
             new_node->children = node;
+            new_node->next = node->next;
+            node->next = NULL;
 
             assert ((!parent) || (!left));
 
@@ -324,14 +338,14 @@ _delete (struct trie_node *node, const char *string,
                     free(found);
                     node_count--;
                 }
-	
+  
                 /* Delete the root node if we empty the tree */
                 if (node == root && node->children == NULL && node->ip4_address == 0) {
                     root = node->next;
                     free(node);
                     node_count--;
                 }
-	
+  
                 return node; /* Recursively delete needless interior nodes */
             } else 
                 return NULL;
@@ -374,7 +388,7 @@ _delete (struct trie_node *node, const char *string,
                     free(found);
                     node_count--;
                 }       
-	
+  
                 return node; /* Recursively delete needless interior nodes */
             }
             return NULL;
@@ -390,15 +404,43 @@ int delete  (const char *string, size_t strlen) {
     if (strlen == 0)
         return 0;
 
+    assert(strlen < 64);
+
     return (NULL != _delete(root, string, strlen));
 }
 
-
 /* Find one node to remove from the tree. 
- * Use any policy you like to select the node.
+ * Traverse the leftmost branch of the tree to find string
  */
 int drop_one_node  () {
-    // Your code here
+    assert(root->key != NULL);
+    struct trie_node *node = root;
+    char string[64];
+
+    /* Copy the string of the root */
+    strncpy(string, node->key, node->strlen);
+    int keylen = node->strlen;
+  
+    /* Temp is used for string manipulation */    
+    char temp[64];
+    
+    /* Get string by iteratively calling node's child and concatenating
+       the keys until there are no more children */
+    while((node = node->children) != NULL) {
+
+      /* Memset is required to overwrite the previous temp */
+      memset(temp, 0, 64);
+
+      strncpy(temp, node->key, node->strlen);   // Copy node key to temp
+      strncat(temp, string, keylen);    // Concatenate string to temp
+      keylen += node->strlen;
+      strncpy(string, temp, keylen);    // Copy temp to string
+    }
+
+    /* Call recursive delete to avoid deadlock */
+    _delete(root, string, keylen);
+
+    free(node);
     return 0;
 }
 
@@ -406,12 +448,9 @@ int drop_one_node  () {
  */
 void check_max_nodes  () {
     while (node_count > max_count) {
-        printf("Warning: not dropping nodes yet.  Drop one node not implemented\n");
-        break;
-        //drop_one_node();
+      drop_one_node();
     }
 }
-
 
 void _print (struct trie_node *node) {
     printf ("Node at %p.  Key %.*s, IP %d.  Next %p, Children %p\n", 
