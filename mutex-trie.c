@@ -1,4 +1,6 @@
-/* A (reverse) trie with trie-wide mutual exclusion. */
+/* -*- mode:c; c-file-style:"k&r"; c-basic-offset: 4; tab-width:4; indent-tabs-mode:nil; mode:auto-fill; fill-column:78; -*- */
+/* vim: set ts=4 sw=4 et tw=78 fo=cqt wm=0: */
+/* A simple, (reverse) trie.  Only for use with 1 thread. */
 
 #include <stddef.h>
 #include <stdio.h>
@@ -12,30 +14,15 @@ struct trie_node {
     unsigned int strlen; /* Length of the key */
     int32_t ip4_address; /* 4 octets */
     struct trie_node *children; /* Sorted list of children */
-    char key[64]; /* Up to 64 chars */
+    char key[MAX_KEY]; /* Up to 64 chars */
 };
 
 static struct trie_node * root = NULL;
 static int node_count = 0;
 static int max_count = 100;  //Try to stay at no more than 100 nodes
 pthread_mutex_t mutex;
-pthread_cond_t delete_cond = PTHREAD_COND_INITIALIZER;
+pthread_cond_t delete_cond;
 extern int separate_delete_thread;
-
-void init(int numthreads) {
-
-    /* RV of 0 indicates success */
-    /* Initialize mutex thread and delete thread condition */
-    assert(pthread_mutex_init(&mutex, NULL) == 0);
-    assert(pthread_cond_init(&delete_cond, NULL) == 0);
-
-    root = NULL;
-}
-
-void shutdown_delete_thread() {
-  /* Your code here */
-  return;
-}
 
 struct trie_node * new_leaf (const char *string, size_t strlen, int32_t ip4_address) {
     struct trie_node *new_node = malloc(sizeof(struct trie_node));
@@ -44,7 +31,7 @@ struct trie_node * new_leaf (const char *string, size_t strlen, int32_t ip4_addr
         printf ("WARNING: Node memory allocation failed.  Results may be bogus.\n");
         return NULL;
     }
-    assert(strlen < 64);
+    assert(strlen < MAX_KEY);
     assert(strlen > 0);
     new_node->next = NULL;
     new_node->strlen = strlen;
@@ -56,9 +43,21 @@ struct trie_node * new_leaf (const char *string, size_t strlen, int32_t ip4_addr
     return new_node;
 }
 
+// Compare strings backward.  Unlike strncmp, we assume
+// that we will not stop at a null termination, only after
+// n chars (or a difference).  Base code borrowed from musl
+int reverse_strncmp(const char *left, const char *right, size_t n)
+{
+    const unsigned char *l= (const unsigned char *) &left[n-1];
+    const unsigned char *r= (const unsigned char *) &right[n-1];
+    if (!n--) return 0;
+    for (; *l && *r && n && *l == *r ; l--, r--, n--);
+    return *l - *r;
+}
+
 int compare_keys (const char *string1, int len1, const char *string2, int len2, int *pKeylen) {
     int keylen, offset;
-    char scratch[64];
+    char scratch[MAX_KEY];
     assert (len1 > 0);
     assert (len2 > 0);
     // Take the max of the two keys, treating the front as if it were 
@@ -81,8 +80,7 @@ int compare_keys (const char *string1, int len1, const char *string2, int len2, 
     assert (keylen > 0);
     if (pKeylen)
         *pKeylen = keylen;
-
-      return strncmp(string1, string2, keylen);
+    return reverse_strncmp(string1, string2, keylen);
 }
 
 int compare_keys_substring (const char *string1, int len1, const char *string2, int len2, int *pKeylen) {
@@ -93,10 +91,21 @@ int compare_keys_substring (const char *string1, int len1, const char *string2, 
     assert (keylen > 0);
     if (pKeylen)
         *pKeylen = keylen;
-
-    return strncmp(&string1[offset1], &string2[offset2], keylen);
+    return reverse_strncmp(&string1[offset1], &string2[offset2], keylen);
 }
 
+void init(int numthreads) {
+    /* RV of 0 indicates success */
+    /* Initialize mutex thread and delete thread condition */
+    assert(pthread_mutex_init(&mutex, NULL) == 0);
+    assert(pthread_cond_init(&delete_cond, NULL) == 0);
+    root = NULL;
+}
+
+void shutdown_delete_thread() {
+    // Don't need to do anything in the sequential case.
+    return;
+}
 
 /* Recursive helper function.
  * Returns a pointer to the node if found.
@@ -106,12 +115,13 @@ int compare_keys_substring (const char *string1, int len1, const char *string2, 
  */
 struct trie_node * 
 _search (struct trie_node *node, const char *string, size_t strlen) {
+     
     int keylen, cmp;
 
     // First things first, check if we are NULL 
     if (node == NULL) return NULL;
 
-    assert(node->strlen < 64);
+    assert(node->strlen <= MAX_KEY);
 
     // See if this key is a substring of the string passed in
     cmp = compare_keys_substring(node->key, node->strlen, string, strlen, &keylen);
@@ -126,6 +136,7 @@ _search (struct trie_node *node, const char *string, size_t strlen) {
             return _search(node->children, string, strlen - keylen);
         } else {
             assert (strlen == keylen);
+
             return node;
         }
 
@@ -145,6 +156,8 @@ _search (struct trie_node *node, const char *string, size_t strlen) {
 int search  (const char *string, size_t strlen, int32_t *ip4_address) {
     struct trie_node *found;
 
+    assert(strlen <= MAX_KEY);
+    
     // Skip strings of length 0
     if (strlen == 0)
         return 0;
@@ -163,11 +176,12 @@ int search  (const char *string, size_t strlen, int32_t *ip4_address) {
 /* Recursive helper function */
 int _insert (const char *string, size_t strlen, int32_t ip4_address, 
              struct trie_node *node, struct trie_node *parent, struct trie_node *left) {
+
     int cmp, keylen;
 
     // First things first, check if we are NULL 
     assert (node != NULL);
-    assert (node->strlen < 64);
+    assert (node->strlen <= MAX_KEY);
 
     // Take the minimum of the two lengths
     cmp = compare_keys_substring (node->key, node->strlen, string, strlen, &keylen);
@@ -187,7 +201,7 @@ int _insert (const char *string, size_t strlen, int32_t ip4_address,
             new_node->children = node;
             new_node->next = node->next;
             node->next = NULL;
-
+            
             assert ((!parent) || (!left));
 
             if (parent) {
@@ -286,14 +300,20 @@ int _insert (const char *string, size_t strlen, int32_t ip4_address,
     }
 }
 
+void assert_invariants();
+
 int insert (const char *string, size_t strlen, int32_t ip4_address) {
-    /* Skip strings of length 0 */
+
+    assert(strlen <= MAX_KEY);
+
+    // Skip strings of length 0
     if (strlen == 0)
         return 0;
 
     /* Check conditions to wake up delete thread */
-    if (separate_delete_thread && node_count > 100)
+    if (separate_delete_thread == 1 && node_count > max_count) {
         assert(pthread_cond_signal(&delete_cond) == 0);
+    }
 
     /* Edge case: root is null */
     if (root == NULL) {
@@ -311,6 +331,8 @@ int insert (const char *string, size_t strlen, int32_t ip4_address) {
     int rv = _insert (string, strlen, ip4_address, root, NULL, NULL);
     assert(pthread_mutex_unlock(&mutex) == 0);
 
+    assert_invariants();
+    
     return rv;
 }
 
@@ -328,7 +350,7 @@ _delete (struct trie_node *node, const char *string,
     // First things first, check if we are NULL 
     if (node == NULL) return NULL;
 
-    assert(node->strlen < 64);
+    assert(node->strlen < MAX_KEY);
 
     // See if this key is a substring of the string passed in
     cmp = compare_keys_substring (node->key, node->strlen, string, strlen, &keylen);
@@ -349,14 +371,14 @@ _delete (struct trie_node *node, const char *string,
                     free(found);
                     node_count--;
                 }
-  
+    
                 /* Delete the root node if we empty the tree */
                 if (node == root && node->children == NULL && node->ip4_address == 0) {
                     root = node->next;
                     free(node);
                     node_count--;
                 }
-  
+    
                 return node; /* Recursively delete needless interior nodes */
             } else 
                 return NULL;
@@ -399,7 +421,7 @@ _delete (struct trie_node *node, const char *string,
                     free(found);
                     node_count--;
                 }       
-  
+    
                 return node; /* Recursively delete needless interior nodes */
             }
             return NULL;
@@ -411,21 +433,22 @@ _delete (struct trie_node *node, const char *string,
 }
 
 int delete  (const char *string, size_t strlen) {
-
     // Skip strings of length 0
     if (strlen == 0)
         return 0;
-    
-    assert(strlen < 64);
 
-    printf("Deleting %s\n", string);
+    assert(strlen <= MAX_KEY);
+
     /* Lock before recursive call */    
     assert(pthread_mutex_lock(&mutex) == 0);
-    struct trie_node *rv = _delete(root, string, strlen);
+    int rv = (NULL != _delete(root, string, strlen));
     assert(pthread_mutex_unlock(&mutex) == 0);
-
-    return (rv != NULL);
+    
+    assert_invariants();
+    
+    return rv;
 }
+
 
 /* Find one node to remove from the tree. 
  * Traverse the leftmost branch of the tree to find string
@@ -465,11 +488,9 @@ int drop_one_node  () {
 /* Check the total node count; see if we have exceeded a the max.
  */
 void check_max_nodes  () {
-    printf("check_max_nodes\n");
-
     assert(pthread_mutex_lock(&mutex) == 0);
-
-    while(node_count > max_count && separate_delete_thread) {
+    
+    while(node_count < max_count && separate_delete_thread) {
         assert(pthread_cond_wait(&delete_cond, &mutex) == 0);
     }
 
@@ -481,17 +502,56 @@ void check_max_nodes  () {
 }
 
 void _print (struct trie_node *node) {
-  printf ("Node at %p.  Key %.*s, IP %d.  Next %p, Children %p\n", 
-    node, node->strlen, node->key, node->ip4_address, node->next, node->children);
-  if (node->children)
-    _print(node->children);
-  if (node->next)
-    _print(node->next);
+    printf ("Node at %p.  Key %.*s (%d), IP %d.  Next %p, Children %p\n", 
+            node, node->strlen, node->key, node->strlen, node->ip4_address, node->next, node->children);
+    if (node->children)
+        _print(node->children);
+    if (node->next)
+        _print(node->next);
 }
 
 void print() {
-  printf ("Root is at %p\n", root);
-/* Do a simple depth-first search */
-  if (root)
-    _print(root);
+    printf ("Root is at %p\n", root);
+    /* Do a simple depth-first search */
+    if (root)
+        _print(root);
+    printf("node_count: %d\n", node_count);
+}
+
+int _assert_invariants (struct trie_node *node, int prefix_length, int *error) {
+    int count = 1;
+
+    int len = prefix_length + node->strlen;
+    if (len > MAX_KEY) {
+        printf("key too long at node %p.  Key %.*s (%d), IP %d.  Next %p, Children %p\n", 
+               node, node->strlen, node->key, node->strlen, node->ip4_address, node->next, node->children);
+        *error = 1;
+        return count;
+    }
+    
+    if (node->children) {
+        count += _assert_invariants(node->children, len, error);
+        if (*error) {
+            printf("Unwinding tree on error: node %p.  Key %.*s (%d), IP %d.  Next %p, Children %p\n", 
+                   node, node->strlen, node->key, node->strlen, node->ip4_address, node->next, node->children);
+            return count;
+        }
+    }
+
+    if (node->next) {
+        count += _assert_invariants(node->next, prefix_length, error);
+    }
+
+    return count;
+}
+
+void assert_invariants () {
+#ifdef DEBUG    
+    int err = 0;
+    if (root) {
+        int count = _assert_invariants(root, 0, &err);
+        if (err) print();
+        assert(count == node_count);
+    }
+#endif // DEBUG    
 }

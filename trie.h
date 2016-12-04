@@ -1,3 +1,6 @@
+/* -*- mode:c; c-file-style:"k&r"; c-basic-offset: 4; tab-width:4; indent-tabs-mode:nil; mode:auto-fill; fill-column:78; -*- */
+/* vim: set ts=4 sw=4 et tw=78 fo=cqt wm=0: */
+
 #ifndef __TRIE_H__
 #define __TRIE_H__
 
@@ -5,6 +8,10 @@
 #include <assert.h>
 
 /* A simple (reverse) trie interface */
+
+#define MAX_KEY 64
+// Uncomment this line for debug printing
+//#define DEBUG 1
 
 /* Optional init routine.  May not be required. */
 void init (int numthreads);
@@ -27,6 +34,10 @@ int delete  (const char *string, size_t strlen);
  * to lower the count.
  */
 void check_max_nodes  ();
+
+/* Optional shut-down routine to wake up and terminate
+   the delete thread.  May not be required. */
+void shutdown_delete_thread ();
 
 
 /* Print the structure of the tree.  Mostly useful for debugging. */
