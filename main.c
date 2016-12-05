@@ -341,13 +341,20 @@ void help() {
     printf ("\n\n");
 }
 
+void myTests() {
+  int rv = 0;
+  INSERT_TEST("com", 3, 1);
+  INSERT_TEST("google", 6, 2);
+  INSERT_TEST("bing", 4, 3);
+  INSERT_TEST("yahoo", 5, 4);
+  print();
+}
+
 int main(int argc, char ** argv) {
     int numthreads = 16; // default to 1
     int c, i, rv;
     pthread_t *tinfo;
-
-    insert("google", 6, 6);
-    print();
+    myTests();
     // Read options from command line:
     //   # clients from command line, as well as seed file
     //   Simulation length
@@ -396,7 +403,7 @@ int main(int argc, char ** argv) {
 
     // Run the self-tests if we are in debug mode 
 #ifdef DEBUG
-    self_tests();
+    // self_tests();
 #endif
 
     // Launch client threads
