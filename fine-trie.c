@@ -191,8 +191,8 @@ int search  (const char *string, size_t strlen, int32_t *ip4_address) {
     if (strlen == 0)
         return 0;
 
+    // Lock root node... If it exists
     if (root != NULL) {
-      // Lock root node... If it exists
       assert(pthread_mutex_lock(&root->nodetex) == 0);
     }
 
@@ -237,11 +237,19 @@ int _insert (const char *string, size_t strlen, int32_t ip4_address,
 
             if (parent) {
                 parent->children = new_node;
+                assert(pthread_mutex_unlock(&parent->nodetex) == 0);
             } else if (left) {
                 left->next = new_node;
+                assert(pthread_mutex_unlock(&left->nodetex) == 0);
             } else if ((!parent) || (!left)) {
                 root = new_node;
+                // We don't unlock the 'root' because the root is the
+                // new node; hence it was never locked to begin with
             }
+
+            // Unlock current node
+            assert(pthread_mutex_unlock(&node->nodetex) == 0);
+
             return 1;
 
         } else if (strlen > keylen) {
@@ -250,8 +258,30 @@ int _insert (const char *string, size_t strlen, int32_t ip4_address,
                 // Insert leaf here
                 struct trie_node *new_node = new_leaf (string, strlen - keylen, ip4_address);
                 node->children = new_node;
+
+                // Clean up
+                if (parent) {
+                  assert(pthread_mutex_unlock(&parent->nodetex) == 0);
+                } else if (left) {
+                  assert(pthread_mutex_unlock(&left->nodetex) == 0);
+                }
+
+                // Unlock current node
+                assert(pthread_mutex_unlock(&node->nodetex) == 0);
+
                 return 1;
             } else {
+
+                // Clean up
+                if (parent) {
+                  assert(pthread_mutex_unlock(&parent->nodetex) == 0);
+                } else if (left) {
+                  assert(pthread_mutex_unlock(&left->nodetex) == 0);
+                }
+
+                if (node->children != NULL)
+                  assert(pthread_mutex_lock(&node->children->nodetex) == 0);
+
                 // Recur on children list, store "parent" (loosely defined)
                 return _insert(string, strlen - keylen, ip4_address,
                                node->children, node, NULL);
@@ -260,8 +290,27 @@ int _insert (const char *string, size_t strlen, int32_t ip4_address,
             assert (strlen == keylen);
             if (node->ip4_address == 0) {
                 node->ip4_address = ip4_address;
+
+                // Clean up
+                if (parent) {
+                  assert(pthread_mutex_unlock(&parent->nodetex) == 0);
+                } else if (left) {
+                  assert(pthread_mutex_unlock(&left->nodetex) == 0);
+                }
+
+                assert(pthread_mutex_unlock(&node->nodetex) == 0);
+
                 return 1;
             } else {
+                // Clean up
+                if (parent) {
+                  assert(pthread_mutex_unlock(&parent->nodetex) == 0);
+                } else if (left) {
+                  assert(pthread_mutex_unlock(&left->nodetex) == 0);
+                }
+
+                assert(pthread_mutex_unlock(&node->nodetex) == 0);
+
                 return 0;
             }
         }
@@ -292,14 +341,21 @@ int _insert (const char *string, size_t strlen, int32_t ip4_address,
 
             if (node == root) {
                 root = new_node;
+                // Root does not have lock; no need to unlock (lol)
             } else if (parent) {
                 assert(parent->children == node);
                 parent->children = new_node;
+                assert(pthread_mutex_unlock(&parent->nodetex) == 0);
             } else if (left) {
                 left->next = new_node;
+                assert(pthread_mutex_unlock(&left->nodetex) == 0);
             } else if ((!parent) && (!left)) {
                 root = new_node;
             }
+
+            // Lock new node (common substring parent) before inserting
+            assert(new_node != NULL);
+            assert(pthread_mutex_lock(&new_node->nodetex) == 0);
 
             return _insert(string, offset, ip4_address,
                            node, new_node, NULL);
@@ -307,12 +363,32 @@ int _insert (const char *string, size_t strlen, int32_t ip4_address,
             cmp = compare_keys (node->key, node->strlen, string, strlen, &keylen);
             if (cmp < 0) {
                 // No, recur right (the node's key is "less" than  the search key)
-                if (node->next)
+                if (node->next) {
+                      // Clean up
+                    if (parent) {
+                      assert(pthread_mutex_unlock(&parent->nodetex) == 0);
+                    } else if (left) {
+                      assert(pthread_mutex_unlock(&left->nodetex) == 0);
+                    }
+
+                    if (node->next != NULL)
+                      assert(pthread_mutex_lock(&node->next->nodetex) == 0);
+                    
                     return _insert(string, strlen, ip4_address, node->next, NULL, node);
-                else {
+                } else {
                     // Insert here
                     struct trie_node *new_node = new_leaf (string, strlen, ip4_address);
                     node->next = new_node;
+
+                    // Clean up
+                    if (parent) {
+                      assert(pthread_mutex_unlock(&parent->nodetex) == 0);
+                    } else if (left) {
+                      assert(pthread_mutex_unlock(&left->nodetex) == 0);
+                    }
+
+                    assert(pthread_mutex_unlock(&node->nodetex) == 0);
+
                     return 1;
                 }
             } else {
@@ -327,6 +403,15 @@ int _insert (const char *string, size_t strlen, int32_t ip4_address,
                     left->next = new_node;
             }
         }
+        // Clean up
+        if (parent) {
+          assert(pthread_mutex_unlock(&parent->nodetex) == 0);
+        } else if (left) {
+          assert(pthread_mutex_unlock(&left->nodetex) == 0);
+        }
+
+        assert(pthread_mutex_unlock(&node->nodetex) == 0);
+
         return 1;
     }
 }
@@ -335,7 +420,7 @@ void assert_invariants();
 
 int insert (const char *string, size_t strlen, int32_t ip4_address) {
     /* Lock at beginning of function */
-    assert(pthread_mutex_lock(&mutex) == 0);
+    // assert(pthread_mutex_lock(&mutex) == 0);
         
     assert(strlen <= MAX_KEY);
 
@@ -352,17 +437,20 @@ int insert (const char *string, size_t strlen, int32_t ip4_address) {
     if (root == NULL) {
 
         root = new_leaf (string, strlen, ip4_address);
-        assert(pthread_mutex_unlock(&mutex) == 0);
+        // assert(pthread_mutex_unlock(&mutex) == 0);
 
         return 1;
     }
+
+    // Lock root before entering rabbit hole
+    assert(pthread_mutex_lock(&root->nodetex) == 0);
 
     int rv = _insert (string, strlen, ip4_address, root, NULL, NULL);
 
     assert_invariants();
     
     // Unlock before return    
-    assert(pthread_mutex_unlock(&mutex) == 0);
+    // assert(pthread_mutex_unlock(&mutex) == 0);
 
     return rv;
 }
