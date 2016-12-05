@@ -154,6 +154,9 @@ _search (struct trie_node *node, const char *string, size_t strlen) {
 
 
 int search  (const char *string, size_t strlen, int32_t *ip4_address) {
+    /* Lock at beginning of function */
+    assert(pthread_mutex_lock(&mutex) == 0);
+    
     struct trie_node *found;
 
     assert(strlen <= MAX_KEY);
@@ -162,14 +165,14 @@ int search  (const char *string, size_t strlen, int32_t *ip4_address) {
     if (strlen == 0)
         return 0;
 
-    /* Lock before recursive call */
-    assert(pthread_mutex_lock(&mutex) == 0);  
     found = _search(root, string, strlen);
-    assert(pthread_mutex_unlock(&mutex) == 0);
 
     if (found && ip4_address)
         *ip4_address = found->ip4_address;
 
+    // Unlock before return
+    assert(pthread_mutex_unlock(&mutex) == 0);
+    
     return (found != NULL);
 }
 
@@ -303,7 +306,9 @@ int _insert (const char *string, size_t strlen, int32_t ip4_address,
 void assert_invariants();
 
 int insert (const char *string, size_t strlen, int32_t ip4_address) {
-
+    /* Lock at beginning of function */
+    assert(pthread_mutex_lock(&mutex) == 0);
+        
     assert(strlen <= MAX_KEY);
 
     // Skip strings of length 0
@@ -318,21 +323,19 @@ int insert (const char *string, size_t strlen, int32_t ip4_address) {
     /* Edge case: root is null */
     if (root == NULL) {
 
-        /* Lock before recursive call */
-        assert(pthread_mutex_lock(&mutex) == 0);
         root = new_leaf (string, strlen, ip4_address);
         assert(pthread_mutex_unlock(&mutex) == 0);
 
         return 1;
     }
 
-    /* Lock before recursive call */
-    assert(pthread_mutex_lock(&mutex) == 0);
     int rv = _insert (string, strlen, ip4_address, root, NULL, NULL);
-    assert(pthread_mutex_unlock(&mutex) == 0);
 
     assert_invariants();
     
+    // Unlock before return    
+    assert(pthread_mutex_unlock(&mutex) == 0);
+
     return rv;
 }
 
@@ -433,19 +436,22 @@ _delete (struct trie_node *node, const char *string,
 }
 
 int delete  (const char *string, size_t strlen) {
+    /* Lock at beginning of function */
+    assert(pthread_mutex_lock(&mutex) == 0);
+    
     // Skip strings of length 0
     if (strlen == 0)
         return 0;
 
     assert(strlen <= MAX_KEY);
 
-    /* Lock before recursive call */    
-    assert(pthread_mutex_lock(&mutex) == 0);
     int rv = (NULL != _delete(root, string, strlen));
-    assert(pthread_mutex_unlock(&mutex) == 0);
     
     assert_invariants();
     
+    // Unlock before return
+    assert(pthread_mutex_unlock(&mutex) == 0);
+
     return rv;
 }
 
@@ -488,6 +494,7 @@ int drop_one_node  () {
 /* Check the total node count; see if we have exceeded a the max.
  */
 void check_max_nodes  () {
+    /* Lock at beginning of function */
     assert(pthread_mutex_lock(&mutex) == 0);
     
     while(node_count < max_count && separate_delete_thread) {
@@ -498,6 +505,7 @@ void check_max_nodes  () {
         drop_one_node();
     }
 
+    // Unlock
     assert(pthread_mutex_unlock(&mutex) == 0);
 }
 

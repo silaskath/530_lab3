@@ -19,7 +19,7 @@
 #include "trie.h"
 
 int separate_delete_thread = 0;
-int simulation_length = 2; // default to 30 seconds
+int simulation_length = 0; // default to 30 seconds
 volatile int finished = 0;
 #define DEBUG
 #ifdef DEBUG
@@ -240,7 +240,7 @@ int self_tests() {
     rv = delete("xaaa", 4);
     if (!rv) die ("Failed to delete real key xaaa\n");
 
-    // Tests suggested by James
+    // Tests suggested by
     INSERT_TEST("google", 6, 1);
     INSERT_TEST("com", 3, 2);
     INSERT_TEST("edu", 3, 3);
@@ -282,7 +282,7 @@ int self_tests() {
     DELETE_TEST("file", 4);
     DELETE_TEST("principle", 9);
 
-    // Tests suggested by Kammy
+    // Tests suggested by Kammy <3
     INSERT_TEST("zhriz", 5, 1); 
     INSERT_TEST("eeonbws", 7, 2); 
     INSERT_TEST("mfpmirs", 7, 3); 
@@ -345,6 +345,9 @@ int main(int argc, char ** argv) {
     int numthreads = 16; // default to 1
     int c, i, rv;
     pthread_t *tinfo;
+
+    insert("google", 6, 6);
+    print();
     // Read options from command line:
     //   # clients from command line, as well as seed file
     //   Simulation length
